@@ -1,7 +1,6 @@
 package n26
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,8 +15,9 @@ import (
 const apiURL = "https://api.tech26.de"
 
 type Auth struct {
-	UserName string
-	Password string
+	UserName    string
+	Password    string
+	DeviceToken string
 }
 
 type Balance struct {
@@ -51,6 +51,7 @@ type PersonalInfo struct {
 type Token struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+	MfaToken     string `json:"mfaToken"`
 }
 
 type Statuses struct {
@@ -212,18 +213,29 @@ type Spaces struct {
 
 type Client http.Client
 
+type TokenSource struct {
+	AccessToken string
+}
+
+func (t *TokenSource) Token() (*oauth2.Token, error) {
+	token := &oauth2.Token{
+		AccessToken: t.AccessToken,
+	}
+	return token, nil
+}
+
 func NewClient(a Auth) (*Client, error) {
-	c := oauth2.Config{
-		ClientID:     "android",
-		ClientSecret: "secret",
-		Endpoint:     oauth2.Endpoint{TokenURL: apiURL + "/oauth/token"},
+	token := &Token{}
+	err := token.GetMFAToken(a.UserName, a.Password, a.DeviceToken)
+	check(err)
+	err = token.requestMfaApproval(a.DeviceToken)
+	check(err)
+
+	tokenSource := &TokenSource{
+		AccessToken: token.AccessToken,
 	}
-	ctx := context.Background()
-	tok, err := c.PasswordCredentialsToken(ctx, a.UserName, a.Password)
-	if err != nil {
-		return nil, err
-	}
-	return (*Client)(c.Client(ctx, tok)), nil
+	oauthClient := oauth2.NewClient(oauth2.NoContext, tokenSource)
+	return (*Client)(oauthClient), nil
 }
 
 func (c *Client) n26RawRequest(requestMethod, endpoint string, params map[string]string, callback func(io.Reader) error) error {
@@ -370,7 +382,7 @@ func (auth *Client) GetTransactions(from, to TimeStamp, limit string) (*Transact
 }
 
 // Get transactions for the given time window as N26 CSV file. Stored as 'smrt_statement.csv'
-func (auth *Client) GetSmartStatementCsv(from, to TimeStamp, reader func (io.Reader) error) error {
+func (auth *Client) GetSmartStatementCsv(from, to TimeStamp, reader func(io.Reader) error) error {
 	//Filter is applied only if both values are set
 	if from.IsZero() || to.IsZero() {
 		return errors.New("Start and end time must be set")

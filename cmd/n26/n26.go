@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	appVersion = "1.4.5"
+	appVersion = "1.5.2"
 )
 
 func check(e error) {
@@ -38,7 +38,12 @@ func authentication() (*n26.Client, error) {
 		check(err)
 		password = string(maskedPass)
 	}
-	return n26.NewClient(n26.Auth{UserName: username, Password: password})
+	deviceToken := os.Getenv("N26_DEVICE_TOKEN")
+	if deviceToken == "" {
+		fmt.Print("N26 device token (must be in uuid format): ")
+		fmt.Scanln(&deviceToken)
+	}
+	return n26.NewClient(n26.Auth{UserName: username, Password: password, DeviceToken: deviceToken})
 }
 
 // Interface for generic data writer that has a header and data table e.g. table writer and csv writer
@@ -281,31 +286,32 @@ func main() {
 		},
 		{
 			Name:      "statements",
-			Usage:     "your statements. Passing the statement ID as argument, downloads the PDF to the current directory",
+			Usage:     "your statements. Passing one or more space separated statement IDs as argument, downloads the PDF to the current directory",
 			ArgsUsage: "[statement ID]",
 			Action: func(c *cli.Context) error {
 				API, err := authentication()
 				check(err)
 				dateRegex := regexp.MustCompile("statement-[0-9][0-9][0-9][0-9]-(1[0-2]|0[1-9]|\\d)")
-				argument := c.Args().First()
-				switch {
-				case dateRegex.MatchString(argument):
-					API.GetStatementPDF(argument)
-					fmt.Println(fmt.Sprintf("[+] PDF file %s.pdf downloaded!", argument))
-				default:
-					prettyJSON, statements := API.GetStatements(argument)
-					if prettyJSON != "" {
-						fmt.Println(prettyJSON)
-					} else {
-						data := [][]string{}
-						for _, statement := range *statements {
-							data = append(data,
-								[]string{
-									statement.ID,
-								},
-							)
+				for _, argument := range c.Args() {
+					switch {
+					case dateRegex.MatchString(argument):
+						API.GetStatementPDF(argument)
+						fmt.Println(fmt.Sprintf("[+] PDF file %s.pdf downloaded!", argument))
+					default:
+						prettyJSON, statements := API.GetStatements(argument)
+						if prettyJSON != "" {
+							fmt.Println(prettyJSON)
+						} else {
+							data := [][]string{}
+							for _, statement := range *statements {
+								data = append(data,
+									[]string{
+										statement.ID,
+									},
+								)
+							}
+							NewTableWriter().WriteData([]string{"ID"}, data)
 						}
-						NewTableWriter().WriteData([]string{"ID"}, data)
 					}
 				}
 				return nil
